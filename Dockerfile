@@ -1,64 +1,50 @@
-# Use Ubuntu as base
-FROM ubuntu:22.04
+FROM ubuntu:20.04
 
-# Install MinGW-w64 compiler
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install essential build tools
 RUN apt-get update && apt-get install -y \
-    mingw-w64 \
-    g++-mingw-w64-x86-64 \
+    build-essential \
     wget \
-    unzip \
     git \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create working directory
+# Download MinGW binaries directly
+RUN wget https://github.com/mstorsjo/llvm-mingw/releases/download/20250114/llvm-mingw-20250114-ucrt-ubuntu-20.04-x86_64.tar.xz && \
+    tar -xf llvm-mingw-20250114-ucrt-ubuntu-20.04-x86_64.tar.xz && \
+    mv llvm-mingw-20250114-ucrt-ubuntu-20.04-x86_64 /opt/llvm-mingw && \
+    rm llvm-mingw-20250114-ucrt-ubuntu-20.04-x86_64.tar.xz
+
+# Add to PATH
+ENV PATH="/opt/llvm-mingw/bin:${PATH}"
+
+# Download nlohmann/json
+RUN git clone https://github.com/nlohmann/json.git && \
+    mkdir -p /opt/llvm-mingw/x86_64-w64-mingw32/include/nlohmann && \
+    cp json/single_include/nlohmann/json.hpp /opt/llvm-mingw/x86_64-w64-mingw32/include/nlohmann/ && \
+    rm -rf json
+
 WORKDIR /build
 
-# Copy source file (will be mounted from GitHub)
-COPY lab_practice_v3.cpp .
+# Compilation script
+RUN echo '#!/bin/bash' > compile.sh && \
+    echo 'x86_64-w64-mingw32-clang++ -static -O2 -s -o lab_practice_v3.exe lab_practice_v3.cpp \' >> compile.sh && \
+    echo '    -lws2_32 -lwininet -liphlpapi -lwlanapi -ladvapi32 -lgdiplus -lshell32 \' >> compile.sh && \
+    echo '    -lwinhttp -lcrypt32 -lnetapi32 -std=c++17 \' >> compile.sh && \
+    echo '    -I/opt/llvm-mingw/x86_64-w64-mingw32/include' >> compile.sh && \
+    chmod +x compile.sh
 
-# Compile the Windows executable
-RUN x86_64-w64-mingw32-g++ -static -O2 -s -o lab_practice_v3.exe lab_practice_v3.cpp \
-    -lws2_32 \
-    -lwininet \
-    -liphlpapi \
-    -lwlanapi \
-    -ladvapi32 \
-    -lgdiplus \
-    -lshell32 \
-    -lwinhttp \
-    -lcrypt32 \
-    -lnetapi32 \
-    -static-libgcc \
-    -static-libstdc++ \
-    -std=c++17
-
-# Create output directory and copy the executable
-RUN mkdir /output && cp lab_practice_v3.exe /output/
-
-# Create a simple web server to serve the file
-RUN apt-get install -y python3
-
-# Create download page
-RUN echo '#!/bin/bash' > /serve.sh && \
-    echo 'cd /output' >> /serve.sh && \
-    echo 'echo "Content-type: text/html"' > index.html && \
-    echo 'echo "" >> index.html' >> index.html && \
-    echo '<html><head><title>Build Complete</title>' >> index.html && \
-    echo '<style>body{font-family:Arial;margin:50px;background:#f0f0f0;}' >> index.html && \
-    echo '.container{background:white;padding:30px;border-radius:10px;}' >> index.html && \
-    echo 'a{background:#0078d7;color:white;padding:10px 20px;' >> index.html && \
-    echo 'text-decoration:none;border-radius:5px;display:inline-block;}' >> index.html && \
-    echo 'a:hover{background:#005a9e;}</style>' >> index.html && \
-    echo '</head><body><div class="container">' >> index.html && \
-    echo '<h1>✅ Build Complete</h1>' >> index.html && \
-    echo '<p>Your Windows executable is ready:</p>' >> index.html && \
-    echo '<a href="/lab_practice_v3.exe">Download lab_practice_v3.exe</a>' >> index.html && \
-    echo '<p><small>File size: ' >> index.html && \
-    echo $(ls -lh /output/lab_practice_v3.exe | awk '{print $5}') >> index.html && \
-    echo '</small></p></div></body></html>' >> index.html && \
-    echo 'python3 -m http.server 8080' >> /serve.sh && \
-    chmod +x /serve.sh
+# Web server script
+RUN echo '#!/bin/bash' > serve.sh && \
+    echo 'mkdir -p /output' >> serve.sh && \
+    echo 'if [ -f "lab_practice_v3.exe" ]; then' >> serve.sh && \
+    echo '    cp lab_practice_v3.exe /output/' >> serve.sh && \
+    echo 'fi' >> serve.sh && \
+    echo 'cd /output' >> serve.sh && \
+    echo 'python3 -m http.server 8080' >> serve.sh && \
+    chmod +x serve.sh
 
 EXPOSE 8080
 
-CMD ["/serve.sh"]
+CMD ["/build/serve.sh"]
